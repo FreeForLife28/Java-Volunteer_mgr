@@ -56,19 +56,22 @@ Open a terminal in the cloned project folder.
 
    Open a new VS Code terminal after installation so the updated user PATH is loaded.
 
-2. Initialize the local database and app account:
+2. Create a local database and initialize its tables and app account:
 
    ```powershell
-   jm migrate
+   jm migrate volunteer_db
    ```
 
-   The command starts a stopped local MySQL service when available, applies
-   `database/schema.sql`, creates or updates the restricted `volunteer_app` account,
-   and saves a generated password in the ignored `src/main/resources/db.properties`.
-   Enter the MySQL administrator password when prompted. Set `JM_DB_ADMIN_USER` if
-   the administrator login is not `root`. If both `DB_USER` and `DB_PASSWORD` are
-   set, those credentials are used instead and the properties file is not changed.
-   The configured `DB_URL`/`db.url` must point to `volunteer_db`.
+   Replace `volunteer_db` with the database name you want. The command checks for a
+   local MySQL server and starts a stopped Windows service when available. It creates
+   the database, applies `database/schema.sql`, creates or updates the `volunteer_app`
+   account, then saves connection settings in the ignored
+   `src/main/resources/db.properties`. The schema file must exist in the project
+   root's `database` folder. Enter the MySQL administrator password when prompted.
+   Set `JM_DB_ADMIN_USER` if the administrator login is not `root`. If `DB_URL` is
+   set, its database name must match the command argument. Existing app credentials
+   are reused; if there is no saved app password, a new one is generated and saved.
+   When both `DB_USER` and `DB_PASSWORD` are set, those values are used and saved.
 
 3. Set `CATALINA_HOME` to the Tomcat 9 installation folder, or let `jm` ask for it:
 

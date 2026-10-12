@@ -50,4 +50,4 @@ finally {
 }
 
 Write-Host "Installed jm in $installDirectory"
-Write-Host 'Open a new VS Code terminal, then run: jm run volunteer.war'
+Write-Host 'Open a new VS Code terminal, then run: jm migrate <database_name>'

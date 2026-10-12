@@ -48,43 +48,7 @@ Install the prerequisites:
 
 Open a terminal in the cloned project folder.
 
-1. Create the VolunteerHub database and tables using a MySQL administrator account.
-   From PowerShell, run:
-
-   ```powershell
-   cmd.exe /c "mysql -u root -p < database\schema.sql"
-   ```
-
-   Enter the MySQL administrator password when prompted. This initializes the
-   `volunteer_db` schema; it does not create an application database user.
-
-2. Create a dedicated application login. Connect to MySQL with an administrator:
-
-   ```powershell
-   mysql -u root -p
-   ```
-
-   At the MySQL prompt, use a new strong password in place of `REPLACE_WITH_A_NEW_LOCAL_PASSWORD`:
-
-   ```sql
-   CREATE USER 'volunteer_app'@'localhost' IDENTIFIED BY 'REPLACE_WITH_A_NEW_LOCAL_PASSWORD';
-   GRANT ALL PRIVILEGES ON volunteer_db.* TO 'volunteer_app'@'localhost';
-   EXIT;
-   ```
-
-   Keep this password private and do not commit it.
-
-3. Create the local database configuration:
-
-   ```powershell
-   Copy-Item src\main\resources\db.properties.example src\main\resources\db.properties
-   ```
-
-   Edit `src/main/resources/db.properties` and replace `CHANGE_ME` with the password
-   created for `volunteer_app`. This file is intentionally ignored by Git. Alternatively,
-   set `DB_URL`, `DB_USER`, and `DB_PASSWORD` in the environment where Tomcat will run.
-
-4. Install the `jm` command once:
+1. Install the `jm` command once:
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File tools\jm\install-jm.ps1
@@ -92,13 +56,27 @@ Open a terminal in the cloned project folder.
 
    Open a new VS Code terminal after installation so the updated user PATH is loaded.
 
-5. Set `CATALINA_HOME` to the Tomcat 9 installation folder, or let `jm` ask for it:
+2. Initialize the local database and app account:
+
+   ```powershell
+   jm migrate
+   ```
+
+   The command starts a stopped local MySQL service when available, applies
+   `database/schema.sql`, creates or updates the restricted `volunteer_app` account,
+   and saves a generated password in the ignored `src/main/resources/db.properties`.
+   Enter the MySQL administrator password when prompted. Set `JM_DB_ADMIN_USER` if
+   the administrator login is not `root`. If both `DB_USER` and `DB_PASSWORD` are
+   set, those credentials are used instead and the properties file is not changed.
+   The configured `DB_URL`/`db.url` must point to `volunteer_db`.
+
+3. Set `CATALINA_HOME` to the Tomcat 9 installation folder, or let `jm` ask for it:
 
    ```powershell
    $env:CATALINA_HOME = 'C:\path\to\apache-tomcat-9'
    ```
 
-6. Build, deploy, start, and open the app:
+4. Build, deploy, start, and open the app:
 
    ```powershell
    jm run volunteer.war

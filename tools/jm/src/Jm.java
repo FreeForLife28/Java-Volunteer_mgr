@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.SecureRandom;
 import java.awt.Desktop;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,6 +23,8 @@ import java.util.regex.Pattern;
 public final class Jm {
     private static final Pattern MYSQL_URL =
             Pattern.compile("^jdbc:mysql://([^/:?]+)(?::(\\d+))?");
+    private static final Pattern MYSQL_DATABASE_URL =
+            Pattern.compile("^jdbc:mysql://([^/:?]+)(?::(\\d+))?/([^/?]+)");
     private static final Pattern HTTP_CONNECTOR =
             Pattern.compile("<Connector\\b(?=[^>]*\\bport\\s*=\\s*\"(\\d+)\")(?=[^>]*\\bprotocol\\s*=\\s*\"[^\"]*HTTP)[^>]*>",
                     Pattern.CASE_INSENSITIVE);
@@ -30,8 +33,13 @@ public final class Jm {
 
     public static void main(String[] args) {
         try {
+            if (args.length == 1 && "migrate".equalsIgnoreCase(args[0])) {
+                Path project = findProjectRoot(Paths.get("").toAbsolutePath());
+                migrateDatabase(project);
+                return;
+            }
             if (args.length != 2 || !"run".equalsIgnoreCase(args[0])) {
-                throw new IllegalArgumentException("Usage: jm run <war-file>");
+                throw new IllegalArgumentException("Usage: jm run <war-file> | jm migrate");
             }
 
             Path project = findProjectRoot(Paths.get("").toAbsolutePath());
@@ -47,6 +55,123 @@ public final class Jm {
             System.err.println("jm: " + e.getMessage());
             System.exit(1);
         }
+    }
+
+    private static void migrateDatabase(Path project) throws Exception {
+        Path config = project.resolve("src/main/resources/db.properties");
+        Properties properties = new Properties();
+        if (Files.isRegularFile(config)) {
+            try (java.io.InputStream input = Files.newInputStream(config)) {
+                properties.load(input);
+            }
+        }
+
+        String jdbcUrl = System.getenv("DB_URL");
+        if (jdbcUrl == null || jdbcUrl.isEmpty()) {
+            jdbcUrl = properties.getProperty("db.url",
+                    "jdbc:mysql://localhost:3306/volunteer_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC");
+        }
+        Matcher matcher = MYSQL_DATABASE_URL.matcher(jdbcUrl);
+        if (!matcher.find() || !"volunteer_db".equals(matcher.group(3))) {
+            throw new IllegalStateException("jm migrate currently initializes the volunteer_db schema. "
+                    + "Set DB_URL/db.url to a MySQL URL ending in /volunteer_db.");
+        }
+        String host = matcher.group(1);
+        int port = matcher.group(2) == null ? 3306 : Integer.parseInt(matcher.group(2));
+
+        String configuredUser = System.getenv("DB_USER");
+        String configuredPassword = System.getenv("DB_PASSWORD");
+        if ((configuredUser == null || configuredUser.isEmpty())
+                != (configuredPassword == null || configuredPassword.isEmpty())) {
+            throw new IllegalStateException("Set both DB_USER and DB_PASSWORD, or unset both to let jm configure "
+                    + "the local application account.");
+        }
+        boolean useEnvironmentCredentials = configuredUser != null && !configuredUser.isEmpty();
+        String appUser = useEnvironmentCredentials
+                ? configuredUser : properties.getProperty("db.user", "volunteer_app");
+        String appPassword = useEnvironmentCredentials ? configuredPassword : generatePassword();
+        if (!appUser.matches("[A-Za-z0-9_.-]{1,32}")) {
+            throw new IllegalStateException("The configured application database user must contain only letters, "
+                    + "numbers, '.', '_' or '-' and be at most 32 characters.");
+        }
+
+        ensureDatabase(project);
+        Path schema = project.resolve("database").resolve("schema.sql");
+        if (!Files.isRegularFile(schema)) {
+            throw new IllegalStateException("Database schema was not found: " + schema);
+        }
+
+        String adminUser = System.getenv("JM_DB_ADMIN_USER");
+        if (adminUser == null || adminUser.trim().isEmpty()) {
+            adminUser = "root";
+        }
+        if (!adminUser.matches("[A-Za-z0-9_.-]{1,32}")) {
+            throw new IllegalStateException("JM_DB_ADMIN_USER must contain only letters, numbers, '.', '_' or '-'.");
+        }
+
+        Path migrationScript = Files.createTempFile("jm-migrate-", ".sql");
+        try {
+            String sql = new String(Files.readAllBytes(schema), StandardCharsets.UTF_8)
+                    + System.lineSeparator()
+                    + "CREATE USER IF NOT EXISTS '" + escapeSql(appUser) + "'@'localhost' IDENTIFIED BY '"
+                    + escapeSql(appPassword) + "';" + System.lineSeparator()
+                    + "ALTER USER '" + escapeSql(appUser) + "'@'localhost' IDENTIFIED BY '"
+                    + escapeSql(appPassword) + "';" + System.lineSeparator()
+                    + "GRANT ALL PRIVILEGES ON volunteer_db.* TO '" + escapeSql(appUser) + "'@'localhost';"
+                    + System.lineSeparator();
+            Files.write(migrationScript, sql.getBytes(StandardCharsets.UTF_8));
+
+            System.out.println("Applying database schema and configuring the application account...");
+            System.out.println("Enter the MySQL administrator password when prompted.");
+            List<String> command = new ArrayList<>();
+            command.add("mysql");
+            command.add("--host=" + host);
+            command.add("--port=" + port);
+            command.add("--user=" + adminUser);
+            command.add("-p");
+            int exitCode = new ProcessBuilder(command)
+                    .directory(project.toFile())
+                    .redirectInput(migrationScript.toFile())
+                    .inheritIO()
+                    .start()
+                    .waitFor();
+            if (exitCode != 0) {
+                throw new IllegalStateException("MySQL migration failed with exit code " + exitCode
+                        + ". Check the administrator account and MySQL permissions.");
+            }
+        } finally {
+            Files.deleteIfExists(migrationScript);
+        }
+
+        if (!useEnvironmentCredentials) {
+            properties.setProperty("db.url", jdbcUrl);
+            properties.setProperty("db.user", appUser);
+            properties.setProperty("db.password", appPassword);
+            Files.createDirectories(config.getParent());
+            try (java.io.OutputStream output = Files.newOutputStream(config)) {
+                properties.store(output, "Local VolunteerHub database configuration");
+            }
+        }
+        System.out.println("Database migration completed. Schema and application account are ready.");
+        if (!useEnvironmentCredentials) {
+            System.out.println("Local connection settings saved to " + config + ". Keep this file private.");
+        } else {
+            System.out.println("The application will use DB_URL, DB_USER and DB_PASSWORD from the environment.");
+        }
+    }
+
+    private static String generatePassword() {
+        final String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder(32);
+        for (int i = 0; i < 32; i++) {
+            password.append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return password.toString();
+    }
+
+    private static String escapeSql(String value) {
+        return value.replace("\\", "\\\\").replace("'", "''");
     }
 
     private static Path findProjectRoot(Path start) {

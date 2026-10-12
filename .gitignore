@@ -30,3 +30,5 @@ src/main/resources/db.properties
 .env
 .env.*
 !.env.example
+# Local credentials folder
+Java crediantials/

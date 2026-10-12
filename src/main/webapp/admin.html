@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin · VolunteerHub</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="dot"></span><span class="siteName">VolunteerHub</span></div>
+    <nav id="nav" aria-label="Admin sections">
+      <button data-tab="overview">Participation overview</button>
+      <button data-tab="users">User management</button>
+      <button data-tab="listings">Volunteer listings</button>
+      <button data-tab="settings">System settings</button>
+    </nav>
+    <div class="me"><div><strong id="meName"></strong><small>Administrator</small></div><button id="logout" class="btn ghost sm">Sign out</button></div>
+  </aside>
+
+  <main>
+    <section class="tab" id="tab-overview" hidden>
+      <div class="page-head"><div><h1>Participation overview</h1><p>Where the platform stands today.</p></div></div>
+      <div class="stats" id="stats"></div>
+      <div class="card"><h3>Waiting for approval</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Opportunity</th><th>Organization</th><th>Date</th><th>Location</th><th></th></tr></thead>
+          <tbody id="pendingBody"></tbody></table></div></div>
+      <div class="card"><h3>Most popular opportunities</h3>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Opportunity</th><th>Organization</th><th>Sign-ups</th></tr></thead>
+          <tbody id="topBody"></tbody></table></div></div>
+    </section>
+
+    <section class="tab" id="tab-users" hidden>
+      <div class="page-head"><div><h1>User management</h1><p>Create accounts, change roles, suspend or remove people.</p></div>
+        <button class="btn primary" id="addUser">Add user</button></div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th></th></tr></thead>
+        <tbody id="usersBody"></tbody></table></div></div>
+    </section>
+
+    <section class="tab" id="tab-listings" hidden>
+      <div class="page-head"><div><h1>Volunteer listings</h1><p>Approve or reject what organizations submit.</p></div></div>
+      <div class="toolbar">
+        <label class="check" for="listFilter">Show
+          <select id="listFilter"><option value="">All listings</option><option value="PENDING">Pending</option><option value="APPROVED">Approved</option><option value="REJECTED">Rejected</option></select></label>
+      </div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Opportunity</th><th>Organization</th><th>Date</th><th>Location</th><th>Filled</th><th>Status</th><th></th></tr></thead>
+        <tbody id="listingsBody"></tbody></table></div></div>
+    </section>
+
+    <section class="tab" id="tab-settings" hidden>
+      <div class="page-head"><div><h1>System settings</h1><p>These apply to everyone on the platform.</p></div></div>
+      <form class="card form" id="settingsForm" style="max-width:640px">
+        <label>Site name <input id="s_site_name" maxlength="60" required></label>
+        <label>Contact email <input id="s_contact_email" type="email" required></label>
+        <label>Max upcoming sign-ups per volunteer <small>0 means no limit</small>
+          <input id="s_max_active_signups" type="number" min="0" max="100" required></label>
+        <label class="check"><input type="checkbox" id="s_allow_registration"> Let new people create accounts</label>
+        <label class="check"><input type="checkbox" id="s_require_listing_approval"> Require admin approval before a listing goes live</label>
+        <div class="row-actions"><button class="btn primary" type="submit">Save settings</button></div>
+      </form>
+    </section>
+  </main>
+</div>
+
+<dialog id="userDlg">
+  <form id="userForm" class="form">
+    <h2 id="userDlgTitle">Add user</h2>
+    <input type="hidden" id="uId">
+    <label>Name <input id="uName" maxlength="100" required></label>
+    <label>Email <input id="uEmail" type="email" required></label>
+    <div class="form two">
+      <label>Role <select id="uRole"><option value="VOLUNTEER">Volunteer</option><option value="ORGANIZATION">Organization</option><option value="ADMIN">Admin</option></select></label>
+      <label>Status <select id="uStatus"><option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option></select></label>
+    </div>
+    <label>Password <small id="uPassHint">At least 6 characters</small><input id="uPass" type="password" autocomplete="new-password" minlength="6"></label>
+    <div class="row-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" type="submit">Save user</button></div>
+  </form>
+</dialog>
+
+<script src="js/common.js"></script>
+<script src="js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Volunteer · VolunteerHub</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="dot"></span><span class="siteName">VolunteerHub</span></div>
+    <nav id="nav" aria-label="Volunteer sections">
+      <button data-tab="opportunities">Available opportunities</button>
+      <button data-tab="signups">My sign-ups</button>
+      <button data-tab="hours">Hours tracking</button>
+      <button data-tab="messages">Organizations</button>
+    </nav>
+    <div class="me"><div><strong id="meName"></strong><small>Volunteer</small></div><button id="logout" class="btn ghost sm">Sign out</button></div>
+  </aside>
+
+  <main>
+    <section class="tab" id="tab-opportunities" hidden>
+      <div class="page-head"><div><h1>Available opportunities</h1><p>Pick something that fits your week.</p></div></div>
+      <div class="toolbar"><input id="oppSearch" type="search" placeholder="Search by title, place or organization" aria-label="Search opportunities"></div>
+      <div class="cards" id="oppCards"></div>
+    </section>
+
+    <section class="tab" id="tab-signups" hidden>
+      <div class="page-head"><div><h1>My sign-ups</h1><p>Everything you've signed up for and how it went.</p></div></div>
+      <div class="card"><div class="table-wrap"><table>
+        <thead><tr><th>Opportunity</th><th>Organization</th><th>Date</th><th>Location</th><th>Status</th><th></th></tr></thead>
+        <tbody id="signupBody"></tbody></table></div></div>
+    </section>
+
+    <section class="tab" id="tab-hours" hidden>
+      <div class="page-head"><div><h1>Hours tracking</h1><p>Hours confirmed by organizations count automatically. You can also log your own.</p></div></div>
+      <div class="stats" id="hourStats"></div>
+      <form class="card form" id="hoursForm">
+        <h3>Log hours</h3>
+        <div class="form two">
+          <label>Hours <input id="hHours" type="number" min="0.25" max="24" step="0.25" required></label>
+          <label>Date <input id="hDate" type="date" required></label>
+          <label>Related opportunity <small>Optional</small><select id="hListing"><option value="">None</option></select></label>
+          <label>Notes <small>Optional</small><input id="hNotes" maxlength="255"></label>
+        </div>
+        <div class="row-actions"><button class="btn primary" type="submit">Log hours</button></div>
+      </form>
+      <div class="card"><h3>History</h3><div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Hours</th><th>Opportunity</th><th>Notes</th><th>Source</th><th></th></tr></thead>
+        <tbody id="hourBody"></tbody></table></div></div>
+    </section>
+
+    <section class="tab" id="tab-messages" hidden>
+      <div class="page-head"><div><h1>Messages</h1><p id="msgHint"></p></div></div>
+      <form class="card form" id="msgForm">
+        <div class="form two">
+          <label>To <select id="msgTo" required></select></label>
+          <label>Type <select id="msgKind"><option value="MESSAGE">Message</option><option value="FEEDBACK">Feedback</option></select></label>
+        </div>
+        <label>Write something <textarea id="msgBody" maxlength="2000" required></textarea></label>
+        <div class="row-actions"><button class="btn primary" type="submit">Send</button></div>
+      </form>
+      <div class="msgs" id="msgList"></div>
+    </section>
+  </main>
+</div>
+
+<script src="js/common.js"></script>
+<script src="js/messages.js"></script>
+<script src="js/volunteer.js"></script>
+</body>
+</html>

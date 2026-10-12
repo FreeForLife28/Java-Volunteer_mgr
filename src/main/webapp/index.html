@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · VolunteerHub</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="auth">
+  <section class="auth-pitch">
+    <div class="brand" style="padding:0"><span class="dot"></span><span class="siteName">VolunteerHub</span></div>
+    <h1>Good work needs willing hands.</h1>
+    <p>Organizations post what they need. Volunteers pick what fits their week. Every hour is counted.</p>
+    <ul>
+      <li>Organizations: post opportunities and see who's coming</li>
+      <li>Volunteers: sign up in one click and track your hours</li>
+      <li>Administrators: keep listings and accounts in order</li>
+    </ul>
+  </section>
+
+  <section class="auth-form">
+    <div class="auth-box">
+      <div class="tabs" role="tablist">
+        <button id="tabLogin" class="active" type="button">Sign in</button>
+        <button id="tabRegister" type="button">Create account</button>
+      </div>
+
+      <form id="loginForm" class="form">
+        <label>Email <input id="lEmail" type="email" autocomplete="username" required></label>
+        <label>Password <input id="lPass" type="password" autocomplete="current-password" required></label>
+        <div class="form-error" id="lErr" role="alert"></div>
+        <button class="btn primary" type="submit">Sign in</button>
+      </form>
+
+      <form id="regForm" class="form" hidden>
+        <label>Full name or organization name <input id="rName" maxlength="100" required></label>
+        <label>Email <input id="rEmail" type="email" autocomplete="username" required></label>
+        <label>I am joining as
+          <select id="rRole">
+            <option value="VOLUNTEER">A volunteer</option>
+            <option value="ORGANIZATION">An organization</option>
+          </select>
+        </label>
+        <label>Password <small>At least 6 characters</small>
+          <input id="rPass" type="password" autocomplete="new-password" minlength="6" required></label>
+        <div class="form-error" id="rErr" role="alert"></div>
+        <button class="btn primary" type="submit">Create account</button>
+      </form>
+    </div>
+  </section>
+</div>
+<script src="js/common.js"></script>
+<script src="js/index.js"></script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+# Maven build output
+target/
+*.war
+*.jar
+*.class
+
+# Logs
+*.log
+logs/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+nbproject/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local Tomcat / temp files
+work/
+temp/
+
+# Local secrets
+src/main/resources/db.properties
+.env
+.env.*
+!.env.example

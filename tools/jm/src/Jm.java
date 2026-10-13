@@ -41,6 +41,10 @@ public final class Jm {
 
     public static void main(String[] args) {
         try {
+            if (args.length == 1 && "-v".equalsIgnoreCase(args[0])) {
+                System.out.println("Hello From Java manager");
+                return;
+            }
             if (args.length > 0 && "init".equalsIgnoreCase(args[0])) {
                 if (args.length != 1) {
                     throw new IllegalArgumentException("Usage: jm init");

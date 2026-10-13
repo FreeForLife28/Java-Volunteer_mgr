@@ -10,8 +10,9 @@ Commit the application source and the files needed to build, initialize, and run
 - `src/` — Java servlet code and frontend assets.
 - `database/schema.sql` — database and table definitions.
 - `pom.xml` — Maven project configuration and dependencies.
-- `tools/jm/src/Jm.java`, `tools/jm/jm.cmd`, and `tools/jm/install-jm.ps1` — the
-  source and installer for the local `jm` run command.
+- `jm.cmd`, `tools/jm/src/Jm.java`, `tools/jm/jm.cmd`,
+  `tools/jm/templates/pom.xml`, and `tools/jm/install-jm.ps1` — the launcher, setup
+  manager, and POM template. The installer is optional.
 - `README.md`, `git.md`, and `.gitignore` — project documentation and Git exclusions.
 - `src/main/resources/db.properties.example` — safe configuration template with no
   real database password.
@@ -41,24 +42,25 @@ repository.
 
 Install the prerequisites:
 
-- JDK 11 or newer (with `javac` and `java` available in the terminal).
-- Maven 3.6 or newer.
+- JDK 11 or newer (with `javac` and `java` available in the terminal). `jm init`
+  installs Maven and Tomcat 9 if they are missing.
 - MySQL 8, running locally on port 3306.
-- Apache Tomcat 9 (Tomcat 10+ is not compatible with this app's `javax.servlet` API).
 
-Open a terminal in the cloned project folder.
+Open **Command Prompt** in the cloned project folder. The tracked root `jm.cmd` makes
+the command available there without a PATH update or separate installation.
 
-1. Install the `jm` command once:
+1. Prepare Maven, Tomcat 9, the project POM, and Maven dependencies:
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools\jm\install-jm.ps1
+   ```cmd
+   jm init
    ```
 
-   Open a new VS Code terminal after installation so the updated user PATH is loaded.
+   Tools are installed under the ignored `.jm/tools` directory when they are not
+   already available on the machine. Apache archives are SHA-512 verified.
 
 2. Create a local database and initialize its tables and app account:
 
-   ```powershell
+   ```cmd
    jm migrate volunteer_db
    ```
 
@@ -73,15 +75,9 @@ Open a terminal in the cloned project folder.
    are reused; if there is no saved app password, a new one is generated and saved.
    When both `DB_USER` and `DB_PASSWORD` are set, those values are used and saved.
 
-3. Set `CATALINA_HOME` to the Tomcat 9 installation folder, or let `jm` ask for it:
+3. Build, deploy, start, and open the app:
 
-   ```powershell
-   $env:CATALINA_HOME = 'C:\path\to\apache-tomcat-9'
-   ```
-
-4. Build, deploy, start, and open the app:
-
-   ```powershell
+   ```cmd
    jm run volunteer.war
    ```
 

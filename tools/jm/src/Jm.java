@@ -1,6 +1,7 @@
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
@@ -11,16 +12,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.security.MessageDigest;
 import java.awt.Desktop;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
-import java.util.Scanner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public final class Jm {
+    private static final String MAVEN_VERSION = "3.10.0";
+    private static final String MAVEN_SHA512 = "22d31676d5b92ed53308c19ecded3245d0efd0cddfec51ec7bab62f4f13ad70ddddceff8e62940e0e8e2421f3cde8106737f4becec0aa034ffeff2a754e88337";
+    private static final String TOMCAT_VERSION = "9.0.122";
+    private static final String TOMCAT_SHA512 = "5e004cf0b80dfd2465182130a11834190ab9ea98811d37c178afa1c07ddfb5a1e4defd7e52baa377088f1774bf9a2fe9006d17cc2a98af31c2a1ae25e3204a6f";
     private static final Pattern MYSQL_URL =
             Pattern.compile("^jdbc:mysql://([^/:?]+)(?::(\\d+))?");
     private static final Pattern MYSQL_DATABASE_URL =
@@ -33,6 +40,14 @@ public final class Jm {
 
     public static void main(String[] args) {
         try {
+            if (args.length > 0 && "init".equalsIgnoreCase(args[0])) {
+                if (args.length != 1) {
+                    throw new IllegalArgumentException("Usage: jm init");
+                }
+                Path project = findProjectRoot(Paths.get("").toAbsolutePath());
+                initEnvironment(project);
+                return;
+            }
             if (args.length > 0 && "migrate".equalsIgnoreCase(args[0])) {
                 if (args.length != 2) {
                     throw new IllegalArgumentException("Usage: jm migrate <database_name>");
@@ -42,7 +57,7 @@ public final class Jm {
                 return;
             }
             if (args.length != 2 || !"run".equalsIgnoreCase(args[0])) {
-                throw new IllegalArgumentException("Usage: jm run <war-file> | jm migrate <database_name>");
+                throw new IllegalArgumentException("Usage: jm init | jm migrate <database_name> | jm run <war-file>");
             }
 
             Path project = findProjectRoot(Paths.get("").toAbsolutePath());
@@ -51,7 +66,7 @@ public final class Jm {
                 throw new IllegalArgumentException("Expected a .war file name.");
             }
 
-            ensureDatabase(project);
+            requireDatabaseConfiguration(project);
             runMaven(project);
             deployAndStart(project, warName);
         } catch (Exception e) {
@@ -243,31 +258,297 @@ public final class Jm {
                 + "JM_MYSQL_CLIENT to the full path of mysql.exe.");
     }
 
+    private static void initEnvironment(Path project) throws Exception {
+        Path jmDirectory = project.resolve(".jm");
+        Path toolsDirectory = jmDirectory.resolve("tools");
+        Files.createDirectories(toolsDirectory);
+
+        Properties settings = loadToolSettings(project);
+        Path mavenCommand = findMavenCommand(settings);
+        if (mavenCommand == null) {
+            Path localMaven = toolsDirectory.resolve("apache-maven-" + MAVEN_VERSION);
+            if (Files.isRegularFile(localMaven.resolve("bin/mvn.cmd"))) {
+                mavenCommand = localMaven.resolve("bin/mvn.cmd");
+            }
+        }
+        if (mavenCommand == null) {
+            System.out.println("Maven was not found. Installing Apache Maven " + MAVEN_VERSION + " locally...");
+            Path mavenHome = installArchive(
+                    "https://dlcdn.apache.org/maven/maven-3/" + MAVEN_VERSION
+                            + "/binaries/apache-maven-" + MAVEN_VERSION + "-bin.zip",
+                    "https://downloads.apache.org/maven/maven-3/" + MAVEN_VERSION
+                            + "/binaries/apache-maven-" + MAVEN_VERSION + "-bin.zip.sha512",
+                    MAVEN_SHA512, toolsDirectory,
+                    "apache-maven-" + MAVEN_VERSION + "/bin/mvn.cmd");
+            mavenCommand = mavenHome.resolve("bin/mvn.cmd");
+        } else {
+            System.out.println("Using Maven at " + mavenCommand);
+        }
+
+        Path tomcatHome = findTomcatHome(settings);
+        if (tomcatHome == null) {
+            tomcatHome = validTomcatHome(toolsDirectory.resolve("apache-tomcat-" + TOMCAT_VERSION).toString());
+        }
+        if (tomcatHome == null) {
+            System.out.println("Tomcat 9 was not found. Installing Apache Tomcat " + TOMCAT_VERSION + " locally...");
+            tomcatHome = installArchive(
+                    "https://dlcdn.apache.org/tomcat/tomcat-9/v" + TOMCAT_VERSION
+                            + "/bin/apache-tomcat-" + TOMCAT_VERSION + ".zip",
+                    "https://downloads.apache.org/tomcat/tomcat-9/v" + TOMCAT_VERSION
+                            + "/bin/apache-tomcat-" + TOMCAT_VERSION + ".zip.sha512",
+                    TOMCAT_SHA512, toolsDirectory,
+                    "apache-tomcat-" + TOMCAT_VERSION + "/bin/startup.bat");
+        } else {
+            System.out.println("Using Tomcat 9 at " + tomcatHome);
+        }
+
+        ensurePom(project);
+        settings.setProperty("maven.cmd", mavenCommand.toString());
+        settings.setProperty("tomcat.home", tomcatHome.toString());
+        saveToolSettings(project, settings);
+        initDependencies(project, mavenCommand);
+        System.out.println("Environment initialized. Next run: jm migrate <database_name>");
+    }
+
+    private static void ensurePom(Path project) throws IOException {
+        Path pom = project.resolve("pom.xml");
+        if (Files.isRegularFile(pom)) {
+            System.out.println("Using existing " + pom + ".");
+            return;
+        }
+        Path template = project.resolve("tools/jm/templates/pom.xml");
+        if (!Files.isRegularFile(template)) {
+            throw new IllegalStateException("pom.xml is missing and its template was not found: " + template);
+        }
+        Files.copy(template, pom);
+        System.out.println("Created " + pom + " from the project template.");
+    }
+
+    private static Path installArchive(String archiveUrl, String checksumUrl, String expectedSha512,
+            Path toolsDirectory, String requiredRelativePath) throws Exception {
+        Files.createDirectories(toolsDirectory);
+        Path required = toolsDirectory.resolve(requiredRelativePath).normalize();
+        Path home = required.getParent().getParent();
+        if (Files.isRegularFile(required)) {
+            return home;
+        }
+
+        Path downloads = toolsDirectory.resolve("downloads");
+        Files.createDirectories(downloads);
+        String fileName = archiveUrl.substring(archiveUrl.lastIndexOf('/') + 1);
+        Path archive = downloads.resolve(fileName);
+        Path checksumFile = downloads.resolve(fileName + ".sha512");
+        System.out.println("Downloading " + fileName + " from Apache...");
+        download(archiveUrl, archive);
+        download(checksumUrl, checksumFile);
+        String downloadedChecksum = readSha512(checksumFile);
+        String actualChecksum = sha512(archive);
+        if (!actualChecksum.equalsIgnoreCase(downloadedChecksum)
+                || !actualChecksum.equalsIgnoreCase(expectedSha512)) {
+            Files.deleteIfExists(archive);
+            Files.deleteIfExists(checksumFile);
+            throw new IllegalStateException("SHA-512 verification failed for " + fileName + ".");
+        }
+
+        extractZip(archive, toolsDirectory);
+        Files.deleteIfExists(archive);
+        Files.deleteIfExists(checksumFile);
+        if (!Files.isRegularFile(required)) {
+            throw new IllegalStateException("Archive did not contain the expected file: " + requiredRelativePath);
+        }
+        return home;
+    }
+
+    private static void download(String url, Path destination) throws IOException {
+        HttpURLConnection connection = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(120000);
+        connection.setInstanceFollowRedirects(true);
+        try {
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                throw new IOException("Download failed with HTTP " + status + ": " + url);
+            }
+            try (InputStream input = connection.getInputStream()) {
+                Files.copy(input, destination, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            connection.disconnect();
+        }
+    }
+
+    private static String readSha512(Path checksumFile) throws IOException {
+        String value = new String(Files.readAllBytes(checksumFile), StandardCharsets.UTF_8).trim();
+        Matcher matcher = Pattern.compile("(?i)^([0-9a-f]{128})").matcher(value);
+        if (!matcher.find()) {
+            throw new IOException("Apache checksum file did not contain a SHA-512 value.");
+        }
+        return matcher.group(1);
+    }
+
+    private static String sha512(Path file) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-512");
+        try (InputStream input = Files.newInputStream(file)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) >= 0) {
+                digest.update(buffer, 0, count);
+            }
+        }
+        StringBuilder result = new StringBuilder(128);
+        for (byte value : digest.digest()) {
+            result.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        }
+        return result.toString();
+    }
+
+    private static void extractZip(Path archive, Path destination) throws IOException {
+        Path root = destination.toAbsolutePath().normalize();
+        try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                Path output = root.resolve(entry.getName()).normalize();
+                if (!output.startsWith(root)) {
+                    throw new IOException("Archive contains an invalid path: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    Files.createDirectories(output);
+                } else {
+                    Files.createDirectories(output.getParent());
+                    Files.copy(zip, output, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                zip.closeEntry();
+            }
+        }
+    }
+
+    private static Properties loadToolSettings(Path project) throws IOException {
+        Path settingsFile = project.resolve(".jm/tools.properties");
+        Properties settings = new Properties();
+        if (Files.isRegularFile(settingsFile)) {
+            try (InputStream input = Files.newInputStream(settingsFile)) {
+                settings.load(input);
+            }
+        }
+        return settings;
+    }
+
+    private static void saveToolSettings(Path project, Properties settings) throws IOException {
+        Path settingsFile = project.resolve(".jm/tools.properties");
+        Files.createDirectories(settingsFile.getParent());
+        try (java.io.OutputStream output = Files.newOutputStream(settingsFile)) {
+            settings.store(output, "Local VolunteerHub tool locations");
+        }
+    }
+
+    private static Path findMavenCommand(Properties settings) throws Exception {
+        String savedCommand = settings.getProperty("maven.cmd");
+        if (savedCommand != null && Files.isRegularFile(Paths.get(savedCommand))) {
+            return Paths.get(savedCommand).toAbsolutePath().normalize();
+        }
+        List<String> configuredHomes = new ArrayList<>();
+        String value = System.getenv("MAVEN_HOME");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        value = System.getenv("M2_HOME");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        value = settings.getProperty("maven.home");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        for (String configured : configuredHomes) {
+            Path home = Paths.get(configured).toAbsolutePath().normalize();
+            Path command = home.resolve("bin/mvn.cmd");
+            if (Files.isRegularFile(command)) return command;
+        }
+
+        CommandResult onPath = capture("where.exe", "mvn.cmd");
+        if (onPath.exitCode == 0) {
+            for (String line : onPath.output.split("\\R")) {
+                Path executable = Paths.get(line.trim());
+                if (Files.isRegularFile(executable)) return executable;
+            }
+        }
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null) {
+            Path apache = Paths.get(programFiles, "Apache");
+            if (Files.isDirectory(apache)) {
+                try (java.util.stream.Stream<Path> children = Files.list(apache)) {
+                    Path found = children.filter(Files::isDirectory)
+                            .map(path -> path.resolve("bin/mvn.cmd"))
+                            .filter(Files::isRegularFile).findFirst().orElse(null);
+                    if (found != null) return found;
+                } catch (IOException ignored) { }
+            }
+        }
+        return null;
+    }
+
+    private static Path findTomcatHome(Properties settings) {
+        List<String> configuredHomes = new ArrayList<>();
+        String value = System.getenv("CATALINA_HOME");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        value = System.getenv("TOMCAT_HOME");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        value = settings.getProperty("tomcat.home");
+        if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
+        for (String configured : configuredHomes) {
+            Path home = validTomcatHome(configured);
+            if (home != null) return home;
+        }
+
+        String localAppData = System.getenv("LOCALAPPDATA");
+        if (localAppData != null) {
+            Path apache = Paths.get(localAppData, "Apache");
+            if (Files.isDirectory(apache)) {
+                try (java.util.stream.Stream<Path> children = Files.list(apache)) {
+                    Path found = children.filter(Files::isDirectory)
+                            .sorted((a, b) -> b.getFileName().toString().compareTo(a.getFileName().toString()))
+                            .map(path -> validTomcatHome(path.toString()))
+                            .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+                    if (found != null) return found;
+                } catch (IOException ignored) { }
+            }
+        }
+        String programFiles = System.getenv("ProgramFiles");
+        if (programFiles != null) {
+            Path apache = Paths.get(programFiles, "Apache Software Foundation");
+            if (Files.isDirectory(apache)) {
+                try (java.util.stream.Stream<Path> children = Files.list(apache)) {
+                    Path found = children.filter(Files::isDirectory)
+                            .map(path -> validTomcatHome(path.toString()))
+                            .filter(java.util.Objects::nonNull).findFirst().orElse(null);
+                    if (found != null) return found;
+                } catch (IOException ignored) { }
+            }
+        }
+        return null;
+    }
+
+    private static void initDependencies(Path project, Path mavenCommand) throws Exception {
+        System.out.println("Resolving project dependencies with Maven...");
+        runMavenGoal(project, mavenCommand, "-DskipTests dependency:go-offline");
+    }
+
+    private static void runMavenGoal(Path project, Path mavenCommand, String goals) throws Exception {
+        int exitCode = new ProcessBuilder("cmd.exe", "/c", "call \"" + mavenCommand + "\" -B " + goals)
+                .directory(project.toFile()).inheritIO().start().waitFor();
+        if (exitCode != 0) {
+            throw new IllegalStateException("Maven failed with exit code " + exitCode + ".");
+        }
+    }
+
     private static Path findProjectRoot(Path start) {
         for (Path current = start; current != null; current = current.getParent()) {
-            if (Files.isRegularFile(current.resolve("pom.xml"))) {
+            if (Files.isRegularFile(current.resolve("pom.xml"))
+                    || Files.isRegularFile(current.resolve("tools/jm/src/Jm.java"))) {
                 return current;
             }
         }
         throw new IllegalStateException("Run jm from the VolunteerHub project folder or one of its subfolders.");
     }
 
-    private static void ensureDatabase(Path project) throws Exception {
-        Properties properties = new Properties();
-        Path config = project.resolve("src/main/resources/db.properties");
-        if (Files.isRegularFile(config)) {
-            try (java.io.InputStream input = Files.newInputStream(config)) {
-                properties.load(input);
-            }
+    private static void requireDatabaseConfiguration(Path project) {
+        if (!Files.isRegularFile(project.resolve("src/main/resources/db.properties"))) {
+            throw new IllegalStateException("Database is not configured. Run jm migrate <database_name> first.");
         }
-
-        String jdbcUrl = System.getenv("DB_URL");
-        if (jdbcUrl == null || jdbcUrl.isEmpty()) {
-            jdbcUrl = properties.getProperty("db.url",
-                    "jdbc:mysql://localhost:3306/volunteer_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC");
-        }
-
-        ensureDatabase(project, jdbcUrl);
     }
 
     private static void ensureDatabase(Path project, String jdbcUrl) throws Exception {
@@ -362,14 +643,10 @@ public final class Jm {
 
     private static void runMaven(Path project) throws Exception {
         System.out.println("Building VolunteerHub with Maven...");
-        int exitCode = new ProcessBuilder("cmd.exe", "/c", "mvn clean package")
-                .directory(project.toFile())
-                .inheritIO()
-                .start()
-                .waitFor();
-        if (exitCode != 0) {
-            throw new IllegalStateException("Maven build failed with exit code " + exitCode + ".");
-        }
+        Properties settings = loadToolSettings(project);
+        Path mavenCommand = findMavenCommand(settings);
+        if (mavenCommand == null) throw new IllegalStateException("Maven is missing. Run jm init first.");
+        runMavenGoal(project, mavenCommand, "clean package");
     }
 
     private static void deployAndStart(Path project, String warName) throws Exception {
@@ -378,17 +655,8 @@ public final class Jm {
             throw new IllegalStateException("Build did not produce " + war + ".");
         }
 
-        String tomcatHome = System.getenv("CATALINA_HOME");
-        if (tomcatHome == null || tomcatHome.isEmpty()) {
-            tomcatHome = System.getenv("TOMCAT_HOME");
-        }
-        Path tomcat = validTomcatHome(tomcatHome);
-        if (tomcat == null) {
-            if (tomcatHome != null && !tomcatHome.trim().isEmpty()) {
-                System.out.println("Configured Tomcat folder is invalid: " + tomcatHome);
-            }
-            tomcat = promptForTomcatHome();
-        }
+        Path tomcat = findTomcatHome(loadToolSettings(project));
+        if (tomcat == null) throw new IllegalStateException("Tomcat 9 is missing. Run jm init first.");
 
         Path startup = tomcat.resolve("bin").resolve("startup.bat");
         Path webapps = tomcat.resolve("webapps");
@@ -413,25 +681,6 @@ public final class Jm {
         System.out.println("VolunteerHub is running on port " + port + ".");
         System.out.println("Application URL: " + appUrl);
         openBrowser(appUrl);
-        System.out.println("If this is the first database setup, import database/schema.sql once.");
-    }
-
-    private static Path promptForTomcatHome() {
-        try (Scanner scanner = new Scanner(System.in)) {
-            while (true) {
-                System.out.print("Enter the full Tomcat 9 folder path (contains bin\\startup.bat), e.g. C:\\apache-tomcat-9.0.x: ");
-                System.out.flush();
-                if (!scanner.hasNextLine()) {
-                    throw new IllegalStateException("Tomcat folder was not provided.");
-                }
-                String input = scanner.nextLine().trim();
-                Path tomcat = validTomcatHome(input);
-                if (tomcat != null) {
-                    return tomcat;
-                }
-                System.out.println("That folder does not contain both bin\\startup.bat and webapps. Try again.");
-            }
-        }
     }
 
     private static Path validTomcatHome(String value) {
@@ -446,13 +695,27 @@ public final class Jm {
         try {
             Path tomcat = Paths.get(cleaned).toAbsolutePath().normalize();
             if (Files.isRegularFile(tomcat.resolve("bin").resolve("startup.bat"))
-                    && Files.isDirectory(tomcat.resolve("webapps"))) {
+                    && Files.isDirectory(tomcat.resolve("webapps"))
+                    && isTomcat9(tomcat)) {
                 return tomcat;
             }
         } catch (RuntimeException e) {
             return null;
         }
         return null;
+    }
+
+    private static boolean isTomcat9(Path tomcat) {
+        Path catalinaJar = tomcat.resolve("lib/catalina.jar");
+        if (!Files.isRegularFile(catalinaJar)) return false;
+        try (java.util.jar.JarFile jar = new java.util.jar.JarFile(catalinaJar.toFile())) {
+            java.util.jar.Manifest manifest = jar.getManifest();
+            String version = manifest == null ? null
+                    : manifest.getMainAttributes().getValue("Implementation-Version");
+            return version != null && version.startsWith("9.");
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static int findHttpPort(Path tomcat) throws IOException {

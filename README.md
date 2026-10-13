@@ -9,35 +9,33 @@ Volunteer management platform with three roles (Admin, Organization, Volunteer).
 ## What you need installed
 
 - JDK 11 or newer
-- Maven 3.6+
 - MySQL 8 (installed locally; `jm migrate <database_name>` can start its Windows service)
-- Apache Tomcat 9.x (not 10+, which uses the `jakarta.*` namespace)
 
 ## Setup
 
-1. Install the `jm` command once, from a VS Code terminal:
-   `powershell -NoProfile -ExecutionPolicy Bypass -File tools\jm\install-jm.ps1`
-   This requires JDK 11+ and adds the command to your Windows user PATH.
-2. Run `jm migrate volunteer_db` from the project folder (replace `volunteer_db` with
-   the database name you want). It checks for a local MySQL server, starts a stopped
-   Windows service when available, creates the database, applies
-   `database/schema.sql`, creates or updates the `volunteer_app` account, and saves
-   connection settings to the ignored `src/main/resources/db.properties`. Enter the
-   MySQL administrator password when prompted. Set `JM_DB_ADMIN_USER` if the admin
-   account is not `root`. If `DB_URL` is set, its database name must match the command
-   argument. Existing app credentials are reused. If both `DB_USER` and
-   `DB_PASSWORD` are set, those credentials are used; otherwise a password is
-   generated only if `db.properties` does not already contain one.
-3. Run `jm run volunteer.war` from the project folder. It starts a stopped local MySQL
-   Windows service when available, builds the WAR with Maven, copies it to Tomcat 9,
-   starts Tomcat, waits for the application to be ready, and opens it in your default
-   browser. Set `CATALINA_HOME` or `TOMCAT_HOME`, or enter the Tomcat folder when prompted.
-   The terminal prints the detected HTTP port and application URL.
+1. Open **Command Prompt** in the project folder and run `jm init`. The tracked root
+   `jm.cmd` means no separate `jm` installation or PATH change is needed. `jm init`
+   checks for Maven and Tomcat 9; if either is missing, it downloads the Apache binary
+   archive into the ignored `.jm/tools` folder and verifies its SHA-512 checksum. It
+   creates `pom.xml` from the tracked template if it is missing, then resolves Maven
+   dependencies. A JDK 11+ is required to compile the launcher.
+2. Configure the local database with `jm migrate volunteer_db` (replace the name if
+   needed). It checks for a local MySQL server, starts a stopped Windows service when
+   available, creates the database, applies `database/schema.sql`, creates or updates
+   the `volunteer_app` account, and saves connection settings to the ignored
+   `src/main/resources/db.properties`. Enter the MySQL administrator password when
+   prompted. Set `JM_DB_ADMIN_USER` if the admin account is not `root`. If `DB_URL` is
+   set, its database name must match the command argument. Existing app credentials
+   are reused. If both `DB_USER` and `DB_PASSWORD` are set, those credentials are used;
+   otherwise a password is generated only if `db.properties` does not already contain
+   one.
+3. Run `jm run volunteer.war` from the project folder. It builds the WAR with Maven,
+   copies it to Tomcat 9, starts Tomcat, waits for the application to be ready, and
+   opens it in your default browser. The terminal prints the detected HTTP port and URL.
 
-The VS Code task **Install jm command** performs the one-time install; the task
-**Run VolunteerHub with jm** runs the app. Run `jm migrate <database_name>` in a VS
-Code terminal for database setup. If the command is not recognized in an existing
-terminal, open a new VS Code terminal.
+`jm migrate <database_name>` is the database setup command. `jm run <name.war>` builds,
+deploys, and starts the app. The optional `tools/jm/install-jm.ps1` is only needed if
+you want to call `jm` from outside the project folder.
 
 ### Database credential safety
 

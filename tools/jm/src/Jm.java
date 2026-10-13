@@ -28,6 +28,7 @@ public final class Jm {
     private static final String MAVEN_SHA512 = "22d31676d5b92ed53308c19ecded3245d0efd0cddfec51ec7bab62f4f13ad70ddddceff8e62940e0e8e2421f3cde8106737f4becec0aa034ffeff2a754e88337";
     private static final String TOMCAT_VERSION = "9.0.122";
     private static final String TOMCAT_SHA512 = "5e004cf0b80dfd2465182130a11834190ab9ea98811d37c178afa1c07ddfb5a1e4defd7e52baa377088f1774bf9a2fe9006d17cc2a98af31c2a1ae25e3204a6f";
+    private static final boolean WINDOWS = System.getProperty("os.name").toLowerCase(Locale.ROOT).startsWith("windows");
     private static final Pattern MYSQL_URL =
             Pattern.compile("^jdbc:mysql://([^/:?]+)(?::(\\d+))?");
     private static final Pattern MYSQL_DATABASE_URL =
@@ -66,7 +67,8 @@ public final class Jm {
                 throw new IllegalArgumentException("Expected a .war file name.");
             }
 
-            requireDatabaseConfiguration(project);
+            String jdbcUrl = requireDatabaseConfiguration(project);
+            ensureDatabase(project, jdbcUrl);
             runMaven(project);
             deployAndStart(project, warName);
         } catch (Exception e) {
@@ -227,7 +229,7 @@ public final class Jm {
             throw new IllegalStateException("JM_MYSQL_CLIENT does not point to a MySQL client executable: " + client);
         }
 
-        CommandResult onPath = capture("where.exe", "mysql.exe");
+        CommandResult onPath = WINDOWS ? capture("where.exe", "mysql.exe") : capture("which", "mysql");
         if (onPath.exitCode == 0) {
             for (String line : onPath.output.split("\\R")) {
                 Path candidate = Paths.get(line.trim());
@@ -237,6 +239,10 @@ public final class Jm {
             }
         }
 
+        if (!WINDOWS) {
+            throw new IllegalStateException("Could not find the MySQL client. Install mysql-client and ensure `mysql` is on PATH, "
+                    + "or set JM_MYSQL_CLIENT to its full path.");
+        }
         String programFiles = System.getenv("ProgramFiles");
         if (programFiles != null) {
             Path mysqlRoot = Paths.get(programFiles, "MySQL");
@@ -267,8 +273,9 @@ public final class Jm {
         Path mavenCommand = findMavenCommand(settings);
         if (mavenCommand == null) {
             Path localMaven = toolsDirectory.resolve("apache-maven-" + MAVEN_VERSION);
-            if (Files.isRegularFile(localMaven.resolve("bin/mvn.cmd"))) {
-                mavenCommand = localMaven.resolve("bin/mvn.cmd");
+            Path localCommand = localMaven.resolve("bin").resolve(mavenExecutableName());
+            if (Files.isRegularFile(localCommand)) {
+                mavenCommand = localCommand;
             }
         }
         if (mavenCommand == null) {
@@ -279,8 +286,8 @@ public final class Jm {
                     "https://downloads.apache.org/maven/maven-3/" + MAVEN_VERSION
                             + "/binaries/apache-maven-" + MAVEN_VERSION + "-bin.zip.sha512",
                     MAVEN_SHA512, toolsDirectory,
-                    "apache-maven-" + MAVEN_VERSION + "/bin/mvn.cmd");
-            mavenCommand = mavenHome.resolve("bin/mvn.cmd");
+                    "apache-maven-" + MAVEN_VERSION + "/bin/" + mavenExecutableName());
+            mavenCommand = mavenHome.resolve("bin").resolve(mavenExecutableName());
         } else {
             System.out.println("Using Maven at " + mavenCommand);
         }
@@ -297,7 +304,7 @@ public final class Jm {
                     "https://downloads.apache.org/tomcat/tomcat-9/v" + TOMCAT_VERSION
                             + "/bin/apache-tomcat-" + TOMCAT_VERSION + ".zip.sha512",
                     TOMCAT_SHA512, toolsDirectory,
-                    "apache-tomcat-" + TOMCAT_VERSION + "/bin/startup.bat");
+                    "apache-tomcat-" + TOMCAT_VERSION + "/bin/" + tomcatStartupName());
         } else {
             System.out.println("Using Tomcat 9 at " + tomcatHome);
         }
@@ -455,24 +462,25 @@ public final class Jm {
         if (value != null && !value.trim().isEmpty()) configuredHomes.add(value);
         for (String configured : configuredHomes) {
             Path home = Paths.get(configured).toAbsolutePath().normalize();
-            Path command = home.resolve("bin/mvn.cmd");
+            Path command = home.resolve("bin").resolve(mavenExecutableName());
             if (Files.isRegularFile(command)) return command;
         }
 
-        CommandResult onPath = capture("where.exe", "mvn.cmd");
+        CommandResult onPath = WINDOWS ? capture("where.exe", "mvn.cmd") : capture("which", "mvn");
         if (onPath.exitCode == 0) {
             for (String line : onPath.output.split("\\R")) {
                 Path executable = Paths.get(line.trim());
                 if (Files.isRegularFile(executable)) return executable;
             }
         }
+        if (!WINDOWS) return null;
         String programFiles = System.getenv("ProgramFiles");
         if (programFiles != null) {
             Path apache = Paths.get(programFiles, "Apache");
             if (Files.isDirectory(apache)) {
                 try (java.util.stream.Stream<Path> children = Files.list(apache)) {
                     Path found = children.filter(Files::isDirectory)
-                            .map(path -> path.resolve("bin/mvn.cmd"))
+                            .map(path -> path.resolve("bin").resolve(mavenExecutableName()))
                             .filter(Files::isRegularFile).findFirst().orElse(null);
                     if (found != null) return found;
                 } catch (IOException ignored) { }
@@ -494,6 +502,15 @@ public final class Jm {
             if (home != null) return home;
         }
 
+        if (!WINDOWS) {
+            Path[] commonHomes = { Paths.get("/usr/share/tomcat9"), Paths.get("/usr/local/tomcat"),
+                    Paths.get("/opt/tomcat"), Paths.get("/opt/homebrew/opt/tomcat/libexec") };
+            for (Path home : commonHomes) {
+                Path found = validTomcatHome(home.toString());
+                if (found != null) return found;
+            }
+            return null;
+        }
         String localAppData = System.getenv("LOCALAPPDATA");
         if (localAppData != null) {
             Path apache = Paths.get(localAppData, "Apache");
@@ -528,8 +545,18 @@ public final class Jm {
     }
 
     private static void runMavenGoal(Path project, Path mavenCommand, String goals) throws Exception {
-        int exitCode = new ProcessBuilder("cmd.exe", "/c", "call \"" + mavenCommand + "\" -B " + goals)
-                .directory(project.toFile()).inheritIO().start().waitFor();
+        List<String> command = new ArrayList<>();
+        if (WINDOWS) {
+            command.add("cmd.exe");
+            command.add("/c");
+            command.add("call \"" + mavenCommand + "\" -B " + goals);
+        } else {
+            command.add("sh");
+            command.add(mavenCommand.toString());
+            command.add("-B");
+            for (String goal : goals.split("\\s+")) command.add(goal);
+        }
+        int exitCode = new ProcessBuilder(command).directory(project.toFile()).inheritIO().start().waitFor();
         if (exitCode != 0) {
             throw new IllegalStateException("Maven failed with exit code " + exitCode + ".");
         }
@@ -545,10 +572,21 @@ public final class Jm {
         throw new IllegalStateException("Run jm from the VolunteerHub project folder or one of its subfolders.");
     }
 
-    private static void requireDatabaseConfiguration(Path project) {
-        if (!Files.isRegularFile(project.resolve("src/main/resources/db.properties"))) {
+    private static String requireDatabaseConfiguration(Path project) throws IOException {
+        Path config = project.resolve("src/main/resources/db.properties");
+        if (!Files.isRegularFile(config)) {
             throw new IllegalStateException("Database is not configured. Run jm migrate <database_name> first.");
         }
+        Properties properties = new Properties();
+        try (InputStream input = Files.newInputStream(config)) {
+            properties.load(input);
+        }
+        String jdbcUrl = System.getenv("DB_URL");
+        if (jdbcUrl == null || jdbcUrl.trim().isEmpty()) jdbcUrl = properties.getProperty("db.url");
+        if (jdbcUrl == null || jdbcUrl.trim().isEmpty()) {
+            throw new IllegalStateException("Database URL is missing. Run jm migrate <database_name> first.");
+        }
+        return jdbcUrl;
     }
 
     private static void ensureDatabase(Path project, String jdbcUrl) throws Exception {
@@ -569,32 +607,8 @@ public final class Jm {
                     + ". Start the configured database server and try again.");
         }
 
-        List<String> services = findMysqlServices();
-        if (services.isEmpty()) {
-            throw new IllegalStateException("No MySQL Windows service was found and port " + port
-                    + " is not reachable. Start MySQL manually and try again.");
-        }
-
-        String serviceToStart = null;
-        for (String service : services) {
-            if (service.endsWith("|Running")) {
-                serviceToStart = service.substring(0, service.indexOf('|'));
-                break;
-            }
-            if (serviceToStart == null) {
-                serviceToStart = service.substring(0, service.indexOf('|'));
-            }
-        }
-
-        System.out.println("Starting MySQL service " + serviceToStart + "...");
-        String startScript = "$ErrorActionPreference='Stop'; Start-Service -Name '"
-                + serviceToStart.replace("'", "''") + "'";
-        CommandResult start = capture("powershell", "-NoProfile", "-NonInteractive",
-                "-Command", startScript);
-        if (start.exitCode != 0) {
-            throw new IllegalStateException("Could not start MySQL service " + serviceToStart
-                    + ". Try running VS Code as administrator.\n" + start.output.trim());
-        }
+        if (WINDOWS) startWindowsMysql();
+        else startUnixMysql();
 
         long deadline = System.currentTimeMillis() + 45000;
         while (System.currentTimeMillis() < deadline) {
@@ -606,6 +620,113 @@ public final class Jm {
         }
         throw new IllegalStateException("MySQL service started, but " + host + ":" + port
                 + " did not become reachable within 45 seconds.");
+    }
+
+    private static void startWindowsMysql() throws Exception {
+        List<String> services = findMysqlServices();
+        String serviceToStart = null;
+        for (String service : services) {
+            if (!service.endsWith("|Running")) {
+                serviceToStart = service.substring(0, service.indexOf('|'));
+                break;
+            }
+        }
+        if (serviceToStart == null) {
+            throw new IllegalStateException(services.isEmpty()
+                    ? "No MySQL Windows service was found. Start MySQL manually and try again."
+                    : "A MySQL service is running, but its configured port is not reachable.");
+        }
+
+        System.out.println("Starting MySQL service " + serviceToStart + "...");
+        String startScript = "$ErrorActionPreference='Stop'; Start-Service -Name '"
+                + serviceToStart.replace("'", "''") + "'";
+        CommandResult start = capture("powershell", "-NoProfile", "-NonInteractive",
+                "-Command", startScript);
+        if (start.exitCode != 0) {
+            throw new IllegalStateException("Could not start MySQL service " + serviceToStart
+                    + ". Try running VS Code as administrator.\n" + start.output.trim());
+        }
+    }
+
+    private static void startUnixMysql() throws Exception {
+        String osName = System.getProperty("os.name").toLowerCase(Locale.ROOT);
+        if (osName.contains("mac")) {
+            String[] services = { "mysql", "mysql@8.4", "mysql@8.0", "mariadb" };
+            List<String> failures = new ArrayList<>();
+            for (String service : services) {
+                try {
+                    CommandResult result = capture("brew", "services", "start", service);
+                    if (result.exitCode == 0) {
+                        System.out.println("Started MySQL with Homebrew service " + service + ".");
+                        return;
+                    }
+                    failures.add(service + ": " + result.output.trim());
+                } catch (IOException e) {
+                    throw new IllegalStateException("Could not start MySQL automatically. Install/start it with "
+                            + "Homebrew (`brew services start mysql`) or start the service manually.", e);
+                }
+            }
+            throw new IllegalStateException("Could not start a Homebrew MySQL service. "
+                    + "Start MySQL manually and try again. " + String.join("; ", failures));
+        }
+
+        CommandResult units;
+        try {
+            units = capture("systemctl", "list-unit-files", "--type=service", "--no-legend");
+        } catch (IOException e) {
+            units = new CommandResult(1, e.getMessage());
+        }
+        List<String> services = new ArrayList<>();
+        if (units.exitCode == 0) {
+            for (String line : units.output.split("\\R")) {
+                String[] fields = line.trim().split("\\s+");
+                if (fields.length > 0 && fields[0].matches("(mysql|mysqld|mariadb)\\.service")) {
+                    services.add(fields[0]);
+                }
+            }
+        }
+        if (units.exitCode == 0 && services.isEmpty()) {
+            throw new IllegalStateException("No MySQL systemd service was found. Install MySQL or start it manually.");
+        }
+        if (units.exitCode != 0) {
+            services.add("mysql.service");
+            services.add("mariadb.service");
+        }
+
+        List<String> failures = new ArrayList<>();
+        for (String service : services) {
+            System.out.println("Starting MySQL service " + service + "...");
+            if (units.exitCode == 0) {
+                CommandResult start = capture("systemctl", "start", service);
+                if (start.exitCode == 0) return;
+                if (startWithSudo("systemctl", "start", service)) return;
+                failures.add(service + ": " + start.output.trim());
+            }
+            String legacyService = service.endsWith(".service")
+                    ? service.substring(0, service.length() - ".service".length()) : service;
+            try {
+                CommandResult start = capture("service", legacyService, "start");
+                if (start.exitCode == 0) return;
+                if (startWithSudo("service", legacyService, "start")) return;
+                failures.add("service " + legacyService + ": " + start.output.trim());
+            } catch (IOException e) {
+                failures.add("service " + legacyService + ": " + e.getMessage());
+            }
+        }
+        throw new IllegalStateException("Could not start MySQL with systemd. "
+                + "Start it manually and try again. " + String.join("; ", failures));
+    }
+
+    private static boolean startWithSudo(String... command) throws InterruptedException {
+        List<String> elevatedCommand = new ArrayList<>();
+        elevatedCommand.add("sudo");
+        elevatedCommand.addAll(java.util.Arrays.asList(command));
+        try {
+            Process process = new ProcessBuilder(elevatedCommand).inheritIO().start();
+            return process.waitFor() == 0;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static List<String> findMysqlServices() throws Exception {
@@ -658,18 +779,17 @@ public final class Jm {
         Path tomcat = findTomcatHome(loadToolSettings(project));
         if (tomcat == null) throw new IllegalStateException("Tomcat 9 is missing. Run jm init first.");
 
-        Path startup = tomcat.resolve("bin").resolve("startup.bat");
+        Path startup = tomcat.resolve("bin").resolve(tomcatStartupName());
         Path webapps = tomcat.resolve("webapps");
 
         Path deployedWar = webapps.resolve(warName);
         Files.copy(war, deployedWar, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         System.out.println("Copied " + warName + " to " + webapps + ".");
 
-        int exitCode = new ProcessBuilder("cmd.exe", "/c", "call \"" + startup + "\"")
-                .directory(tomcat.toFile())
-                .inheritIO()
-                .start()
-                .waitFor();
+        ProcessBuilder startupProcess = WINDOWS
+                ? new ProcessBuilder("cmd.exe", "/c", "call \"" + startup + "\"")
+                : new ProcessBuilder("sh", startup.toString());
+        int exitCode = startupProcess.directory(tomcat.toFile()).inheritIO().start().waitFor();
         if (exitCode != 0) {
             throw new IllegalStateException("Tomcat startup failed with exit code " + exitCode + ".");
         }
@@ -694,7 +814,7 @@ public final class Jm {
         }
         try {
             Path tomcat = Paths.get(cleaned).toAbsolutePath().normalize();
-            if (Files.isRegularFile(tomcat.resolve("bin").resolve("startup.bat"))
+            if (Files.isRegularFile(tomcat.resolve("bin").resolve(tomcatStartupName()))
                     && Files.isDirectory(tomcat.resolve("webapps"))
                     && isTomcat9(tomcat)) {
                 return tomcat;
@@ -763,13 +883,27 @@ public final class Jm {
             if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                 Desktop.getDesktop().browse(URI.create(appUrl));
             } else {
-                new ProcessBuilder("cmd.exe", "/c", "start", "", appUrl).start();
+                if (WINDOWS) {
+                    new ProcessBuilder("cmd.exe", "/c", "start", "", appUrl).start();
+                } else if (System.getProperty("os.name").toLowerCase(Locale.ROOT).contains("mac")) {
+                    new ProcessBuilder("open", appUrl).start();
+                } else {
+                    new ProcessBuilder("xdg-open", appUrl).start();
+                }
             }
             System.out.println("Opened VolunteerHub in your default browser.");
         } catch (Exception e) {
             System.err.println("Could not open a browser automatically: " + e.getMessage());
             System.err.println("Open this URL manually: " + appUrl);
         }
+    }
+
+    private static String mavenExecutableName() {
+        return WINDOWS ? "mvn.cmd" : "mvn";
+    }
+
+    private static String tomcatStartupName() {
+        return WINDOWS ? "startup.bat" : "startup.sh";
     }
 
     private static CommandResult capture(String... command) throws Exception {

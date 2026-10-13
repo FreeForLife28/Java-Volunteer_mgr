@@ -8,34 +8,40 @@ Volunteer management platform with three roles (Admin, Organization, Volunteer).
 
 ## What you need installed
 
-- JDK 11 or newer
-- MySQL 8 (installed locally; `jm migrate <database_name>` can start its Windows service)
+- JDK 11 or newer, including `java`, `javac`, and `jar` on PATH
+- MySQL 8 installed locally, with its client on PATH
 
 ## Setup
 
-1. Open **Command Prompt** in the project folder and run `jm init`. The tracked root
-   `jm.cmd` means no separate `jm` installation or PATH change is needed. `jm init`
-   checks for Maven and Tomcat 9; if either is missing, it downloads the Apache binary
-   archive into the ignored `.jm/tools` folder and verifies its SHA-512 checksum. It
-   creates `pom.xml` from the tracked template if it is missing, then resolves Maven
-   dependencies. A JDK 11+ is required to compile the launcher.
-2. Configure the local database with `jm migrate volunteer_db` (replace the name if
-   needed). It checks for a local MySQL server, starts a stopped Windows service when
-   available, creates the database, applies `database/schema.sql`, creates or updates
-   the `volunteer_app` account, and saves connection settings to the ignored
-   `src/main/resources/db.properties`. Enter the MySQL administrator password when
+1. Install the `jm` command for your user:
+   - Windows: double-click `tools/installer/install.cmd`.
+   - macOS or Linux: run `sh tools/installer/install.sh`.
+   Open a new terminal after installation. The installer requires JDK 11 or newer and
+   does not install Java.
+2. From the project folder, run `jm init`. It checks for Maven and Tomcat 9; if either
+   is missing, it downloads the Apache archives into the ignored `.jm/tools` folder and
+   verifies their SHA-512 checksums. It creates `pom.xml` from the tracked template if
+   needed, then resolves Maven dependencies.
+3. Configure the local database with `jm migrate volunteer_db` (replace the name if
+   needed). It checks the local MySQL server, starts its Windows or Homebrew/systemd
+   service when stopped, creates the database, applies `database/schema.sql`, and
+   creates or updates the `volunteer_app` account. It saves connection settings to the
+   ignored `src/main/resources/db.properties`. Enter the MySQL administrator password when
    prompted. Set `JM_DB_ADMIN_USER` if the admin account is not `root`. If `DB_URL` is
    set, its database name must match the command argument. Existing app credentials
    are reused. If both `DB_USER` and `DB_PASSWORD` are set, those credentials are used;
    otherwise a password is generated only if `db.properties` does not already contain
    one.
-3. Run `jm run volunteer.war` from the project folder. It builds the WAR with Maven,
-   copies it to Tomcat 9, starts Tomcat, waits for the application to be ready, and
-   opens it in your default browser. The terminal prints the detected HTTP port and URL.
+4. Run `jm run volunteer.war` from the project folder. It builds the WAR with Maven,
+   checks MySQL and starts its service when stopped, copies the WAR to Tomcat 9, starts
+   Tomcat, waits for the application to be ready, and opens it in your default browser.
+   The terminal prints the detected HTTP port and URL. On Linux, starting system services
+   may prompt for your administrator password.
 
 `jm migrate <database_name>` is the database setup command. `jm run <name.war>` builds,
-deploys, and starts the app. The optional `tools/jm/install-jm.ps1` is only needed if
-you want to call `jm` from outside the project folder.
+deploys, and starts the app. To remove the user-level command later, run
+`tools/installer/uninstall.cmd` on Windows or `sh tools/installer/uninstall.sh` on
+macOS/Linux. These uninstallers leave the repository and project `.jm` tools untouched.
 
 ### Database credential safety
 

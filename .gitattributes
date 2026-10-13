@@ -1,0 +1,4 @@
+tools/installer/*.sh text eol=lf
+tools/installer/*.cmd text eol=crlf
+tools/installer/*.ps1 text eol=crlf
+tools/jm/jm.cmd text eol=crlf

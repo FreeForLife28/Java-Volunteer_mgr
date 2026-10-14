@@ -94,3 +94,13 @@ Organizations and volunteers can register themselves on the sign-in page.
   account is still active, and each area (`/api/admin`, `/api/org`, `/api/volunteer`) is role-protected in `AuthFilter`.
 - Confirming attendance (Participation tracking) credits the listing's hours to the volunteer automatically.
 - Each query opens its own JDBC connection, which is fine locally. For heavier use, swap `Db.conn()` for a connection pool.
+
+## Current platform behavior
+
+- Admin settings include the site name and contact email, whether public registration is enabled, whether new or edited opportunities require approval, and the maximum number of upcoming sign-ups per volunteer. A limit of `0` means unlimited.
+- Organizations can review sign-ups and mark volunteers as signed up, attended, or no-show. Marking someone as attended adds verified hours to their record; changing that status removes the verified credit.
+- Volunteers can log their own hours separately from verified attendance hours. The hours view reports total, verified, and self-reported hours, and volunteers can remove their own entries.
+- Volunteers can message active organizations. Organizations can message volunteers who have signed up for one of their opportunities. Either side can send a message or feedback.
+- Public registration creates volunteer or organization accounts. Administrators can also create admin accounts and manage roles, account status, and passwords.
+
+The database setup command supports `DB_URL` to select the local MySQL host, port, and database, `DB_USER` and `DB_PASSWORD` together to supply app credentials, and `JM_DB_ADMIN_USER` to select the MySQL administrator account (default: `root`). `jm migrate` only provisions databases on a local MySQL server. For application connections, `DB_URL`, `DB_USER`, and `DB_PASSWORD` environment variables override values in `src/main/resources/db.properties`.
